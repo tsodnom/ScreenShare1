@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Screen Sharing</title>
+</head>
+<body>
+    <button id="startButton">Start Screen Sharing</button>
+    <button id="clientButton">Client Button</button>
+    <video id="screen-sharing-video" autoplay playsinline style="width: 800; height: 800; border: 1px solid black;"></video>
+    <video id="screen-receiving-video" autoplay playsinline style="width: 600px; height: 400px; border: 1px solid black;"></video>
+
+    <script>
+        const startButton = document.getElementById('startButton');
+        const clientButton = document.getElementById('clientButton');
+        const screenSharingVideo = document.getElementById('screen-sharing-video');
+        const screenReceivingVideo = document.getElementById('screen-receiving-video');
+        let ws;
+        let localStream;
+        let peerConnection;
+        const signalingServerUrl = 'ws://localhost:8080'; // Your WebSocket server URL
+
+        // WebRTC configuration
+        const config = {
+            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        };
+
+        // Check if the browser supports screen sharing
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+            alert('Screen sharing is not supported in this browser.');
+        } else {
+            startButton.addEventListener('click', startScreenSharing);
+        }
+
+        function startScreenSharing() {
+            navigator.mediaDevices.getDisplayMedia({ video: true })
+                .then((stream) => {
+                    localStream = stream;
+                    screenSharingVideo.srcObject = stream;
+
+                    // Set up WebRTC peer connection
+                    peerConnection = new RTCPeerConnection(config);
+                    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+                    peerConnection.onicecandidate = (event) => {
+                        if (event.candidate) {
+                            ws.send(JSON.stringify({ type: 'ice-candidate', candidate: event.candidate }));
+                        }
+                    };
+
+                    peerConnection.ontrack = (event) => {
+                        screenReceivingVideo.srcObject = event.streams[0];
+                    };
+
+                    peerConnection.createOffer()
+                        .then(offer => {
+                            return peerConnection.setLocalDescription(offer);
+                        })
+                        .then(() => {
+                            ws.send(JSON.stringify({ type: 'offer', offer: peerConnection.localDescription }));
+                        })
+                        .catch(error => {
+                            console.error('Error creating offer:', error);
+                        });
+
+                    startButton.disabled = true;
+                })
+                .catch((error) => {
+                    console.error('Error accessing screen sharing:', error);
+                });
+        }
+
+        clientButton.addEventListener('click', function() {
+            ws = new WebSocket(signalingServerUrl);
+
+            ws.onopen = () => {
+                console.log('WebSocket connection established.');
+                ws.send(JSON.stringify({ type: 'client-connect', message: 'Client is connected' }));
+            };
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.stringify(event.data);
+
+                    if (data.type === 'offer') {
+                        peerConnection = new RTCPeerConnection(config);
+
+                        peerConnection.onicecandidate = (event) => {
+                            if (event.candidate) {
+                                ws.send(JSON.stringify({ type: 'ice-candidate', candidate: event.candidate }));
+                            }
+                        };
+
+                        peerConnection.ontrack = (event) => {
+                            screenReceivingVideo.srcObject = event.streams[0];
+                        };
+
+                        peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer))
+                            .then(() => {
+                                return peerConnection.createAnswer();
+                            })
+                            .then(answer => {
+                                return peerConnection.setLocalDescription(answer);
+                            })
+                            .then(() => {
+                                ws.send(JSON.stringify({ type: 'answer', answer: peerConnection.localDescription }));
+                            })
+                            .catch(error => {
+                                console.error('Error handling offer:', error);
+                            });
+                    } else if (data.type === 'answer') {
+                        peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer))
+                            .catch(error => {
+                                console.error('Error setting remote description:', error);
+                            });
+                    } else if (data.type === 'ice-candidate') {
+                        const candidate = new RTCIceCandidate(data.candidate);
+                        peerConnection.addIceCandidate(candidate)
+                            .catch(error => {
+                                console.error('Error adding ice candidate:', error);
+                            });
+                    } else {
+                        console.warn('Unknown message type:', data);
+                    }
+                } catch (error) {
+                    console.error('Error parsing WebSocket message:', error);
+                }
+            };
+
+                ws.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                };
+
+                ws.onclose = () => {
+                    console.log('WebSocket connection closed.');
+                };
+    });
+    </script>
+</body>
+</html>
