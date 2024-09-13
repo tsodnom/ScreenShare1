@@ -38,7 +38,7 @@
                 .then((stream) => {
                     localStream = stream;
                     screenSharingVideo.srcObject = stream;
-
+                    screenReceivingVideo.srcObject = stream; 
                     // Set up WebRTC peer connection
                     peerConnection = new RTCPeerConnection(config);
                     localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
